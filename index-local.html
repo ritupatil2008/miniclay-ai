@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Zoom Bot Joiner (Local SDK)</title>
+  <script src="./zoomus-websdk.umd.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      background-color: #f0f2f5;
+    }
+    .popup {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      width: 300px;
+      text-align: center;
+    }
+    input {
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    button {
+      padding: 10px;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      width: 100%;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    button:disabled {
+      background: #6c757d;
+      cursor: not-allowed;
+    }
+    #status {
+      margin-top: 10px;
+      color: #333;
+      font-size: 14px;
+    }
+    .error {
+      color: #dc3545;
+    }
+    .success {
+      color: #28a745;
+    }
+  </style>
+</head>
+<body>
+  <div class="popup">
+    <h2>Zoom Bot Joiner (Local SDK)</h2>
+    <input type="text" id="meetingId" placeholder="Meeting ID (e.g., 1234567890)">
+    <input type="text" id="password" placeholder="Password (optional)">
+    <input type="text" id="joinLink" placeholder="Or paste full join link">
+    <button id="joinBtn" onclick="joinMeeting()">Join Meeting</button>
+    <div id="status">Enter details and click Join.</div>
+  </div>
+
+  <script>
+    let client = null;
+
+    async function joinMeeting() {
+      const meetingId = document.getElementById('meetingId').value;
+      const password = document.getElementById('password').value;
+      const joinLink = document.getElementById('joinLink').value;
+      const status = document.getElementById('status');
+      const joinBtn = document.getElementById('joinBtn');
+
+      // Validate input
+      if (!meetingId && !joinLink) {
+        status.textContent = 'Please enter a Meeting ID or join link.';
+        status.className = 'error';
+        return;
+      }
+
+      status.textContent = 'Processing...';
+      status.className = '';
+      joinBtn.disabled = true;
+      joinBtn.textContent = 'Joining...';
+      
+      try {
+        // Check if ZoomVideo is defined
+        if (typeof ZoomVideo === 'undefined') {
+          throw new Error('Zoom Video SDK not loaded. Make sure zoomus-websdk.umd.min.js is in the project folder.');
+        }
+
+        const response = await fetch('/join-meeting', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ meetingId, password, joinLink })
+        });
+        const data = await response.json();
+        
+        if (data.error) {
+          status.textContent = 'Error: ' + data.error;
+          status.className = 'error';
+          joinBtn.disabled = false;
+          joinBtn.textContent = 'Join Meeting';
+          return;
+        }
+
+        const { meetingId: finalMeetingId, password: finalPassword, sdkJwt, botName } = data;
+        status.textContent = `Joining as ${botName}...`;
+        status.className = '';
+
+        // Initialize Zoom Video SDK
+        client = ZoomVideo.createClient();
+        await client.init('en-US', 'Global');
+        
+        // Join the meeting
+        await client.join({
+          topic: finalMeetingId,
+          signature: sdkJwt,
+          userName: botName,
+          password: finalPassword,
+          videoSDK: true
+        });
+
+        status.textContent = `✅ Joined as ${botName}! Check Zoom participants.`;
+        status.className = 'success';
+        joinBtn.textContent = 'Leave Meeting';
+        joinBtn.onclick = leaveMeeting;
+        
+        console.log('Successfully joined meeting');
+        const participants = client.getParticipants();
+        console.log('Participants:', participants);
+        if (participants.some(p => p.userName === botName)) {
+          console.log(`✅ Confirmed: ${botName} in participant list.`);
+        } else {
+          console.log(`❌ ${botName} not found in participants.`);
+        }
+        
+        // Listen for participant events
+        client.on('participant-added', (participant) => {
+          console.log('New participant joined:', participant);
+        });
+        
+        client.on('participant-removed', (participant) => {
+          console.log('Participant left:', participant);
+        });
+
+      } catch (error) {
+        status.textContent = '❌ Failed: ' + error.message;
+        status.className = 'error';
+        joinBtn.disabled = false;
+        joinBtn.textContent = 'Join Meeting';
+        console.error('Join failed:', error);
+      }
+    }
+
+    async function leaveMeeting() {
+      if (client) {
+        try {
+          await client.leave();
+          client = null;
+          document.getElementById('status').textContent = 'Left the meeting.';
+          document.getElementById('status').className = '';
+          document.getElementById('joinBtn').textContent = 'Join Meeting';
+          document.getElementById('joinBtn').onclick = joinMeeting;
+        } catch (error) {
+          console.error('Leave failed:', error);
+        }
+      }
+    }
+
+    // Handle Enter key press
+    document.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        joinMeeting();
+      }
+    });
+  </script>
+</body>
+</html>
